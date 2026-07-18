@@ -1,0 +1,50 @@
+{
+  "python": {
+    "version": "3.11.9",
+    "url": "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip",
+    "filename": "python-3.11.9-embed-amd64.zip",
+    "sha256": "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b"
+  },
+  "python_dev": {
+    "version": "3.11.9",
+    "url": "https://www.nuget.org/api/v2/package/python/3.11.9",
+    "filename": "python-3.11.9-dev.zip",
+    "sha256": "9283876d58c017e0e846f95b490da3bca0fc0a6ee1134b2870677cfb7eec3c67"
+  },
+  "pip": {
+    "version": "25.1.1",
+    "url": "https://files.pythonhosted.org/packages/29/a2/d40fb2460e883eca5199c62cfc2463fd261f760556ae6290f88488c362c0/pip-25.1.1-py3-none-any.whl",
+    "filename": "pip-25.1.1-py3-none-any.whl",
+    "sha256": "2913a38a2abf4ea6b64ab507bd9e967f3b53dc1ede74b01b0931e1ce548751af"
+  },
+  "windows_wheels": {
+    "source": "https://github.com/visualbruno/ComfyUI-Trellis2",
+    "commit": "438fe4e2a15bd29620a1cedad0a87c5afad6f81d",
+    "items": [
+      {
+        "filename": "cumesh-1.0-cp311-cp311-win_amd64.whl",
+        "sha256": "f6ec70f31fa24ebef0026ea5d622fce4314e22e2c56979219598fdd6e4df3b28"
+      },
+      {
+        "filename": "custom_rasterizer-0.1-cp311-cp311-win_amd64.whl",
+        "sha256": "b0c79ebf80f27395d5c4a962f4bcaf1f18069aecc9b4b5d8397e340973e58d94"
+      },
+      {
+        "filename": "flex_gemm-0.0.1-cp311-cp311-win_amd64.whl",
+        "sha256": "3a1b8ef109735cc8f19729a007abb48b9a91815f350bc10cc513f5c7e27608f2"
+      },
+      {
+        "filename": "nvdiffrast-0.4.0-cp311-cp311-win_amd64.whl",
+        "sha256": "6d273cc912143a306389ec7b5e0fa44efbe45ea7577f86d8f13ce6b209c56c3e"
+      },
+      {
+        "filename": "nvdiffrec_render-0.0.0-cp311-cp311-win_amd64.whl",
+        "sha256": "c0e4bf4ea6622ddff0eea0ca8b9be75a48318db62a7184891bcb0f1da65d1f8c"
+      },
+      {
+        "filename": "o_voxel-0.0.1-cp311-cp311-win_amd64.whl",
+        "sha256": "da17f251f05ea31c1d0ad2fa3e4b7e025463cb9a12a66fb8ddb3b28634ad1636"
+      }
+    ]
+  }
+}

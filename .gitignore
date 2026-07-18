@@ -191,6 +191,10 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Portable Windows runtime, models, credentials, caches, and generated files.
+# Deleting this directory removes everything installed or created by the app.
+.portable/
+
 # PyPI configuration file
 .pypirc
 

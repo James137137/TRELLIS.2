@@ -1,11 +1,13 @@
-import gradio as gr
-
 import os
-os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+from portable_env import APP_ROOT, configure_portable_environment
+
+PORTABLE_PATHS = configure_portable_environment()
+
+import gradio as gr
 from datetime import datetime
 import shutil
 import cv2
+import threading
 from typing import *
 import torch
 import numpy as np
@@ -20,18 +22,22 @@ import o_voxel
 
 
 MAX_SEED = np.iinfo(np.int32).max
-TMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp')
+TMP_DIR = str(PORTABLE_PATHS['sessions'])
 MODES = [
-    {"name": "Normal", "icon": "assets/app/normal.png", "render_key": "normal"},
-    {"name": "Clay render", "icon": "assets/app/clay.png", "render_key": "clay"},
-    {"name": "Base color", "icon": "assets/app/basecolor.png", "render_key": "base_color"},
-    {"name": "HDRI forest", "icon": "assets/app/hdri_forest.png", "render_key": "shaded_forest"},
-    {"name": "HDRI sunset", "icon": "assets/app/hdri_sunset.png", "render_key": "shaded_sunset"},
-    {"name": "HDRI courtyard", "icon": "assets/app/hdri_courtyard.png", "render_key": "shaded_courtyard"},
+    {"name": "Normal", "icon": APP_ROOT / "assets/app/normal.png", "render_key": "normal"},
+    {"name": "Clay render", "icon": APP_ROOT / "assets/app/clay.png", "render_key": "clay"},
+    {"name": "Base color", "icon": APP_ROOT / "assets/app/basecolor.png", "render_key": "base_color"},
+    {"name": "HDRI forest", "icon": APP_ROOT / "assets/app/hdri_forest.png", "render_key": "shaded_forest"},
+    {"name": "HDRI sunset", "icon": APP_ROOT / "assets/app/hdri_sunset.png", "render_key": "shaded_sunset"},
+    {"name": "HDRI courtyard", "icon": APP_ROOT / "assets/app/hdri_courtyard.png", "render_key": "shaded_courtyard"},
 ]
 STEPS = 8
 DEFAULT_MODE = 3
 DEFAULT_STEP = 3
+pipeline = None
+envmap = None
+_runtime_lock = threading.Lock()
+_ui_assets_lock = threading.Lock()
 
 
 css = """
@@ -298,6 +304,52 @@ def image_to_base64(image):
     return f"data:image/jpeg;base64,{img_str}"
 
 
+def initialize_ui_assets() -> None:
+    """Load small local UI assets without initializing the 4B model."""
+    if all('icon_base64' in mode for mode in MODES):
+        return
+    with _ui_assets_lock:
+        for mode in MODES:
+            if 'icon_base64' not in mode:
+                with Image.open(mode['icon']) as icon:
+                    mode['icon_base64'] = image_to_base64(icon)
+
+
+def initialize_runtime() -> None:
+    """Load TRELLIS.2 once, on demand, in a thread-safe manner."""
+    global pipeline, envmap
+    if pipeline is not None:
+        return
+    with _runtime_lock:
+        if pipeline is not None:
+            return
+        if not torch.cuda.is_available():
+            raise gr.Error("The NVIDIA GPU is unavailable. Check the driver and rerun portable setup.")
+        gpu = torch.cuda.get_device_properties(0)
+        if gpu.total_memory < 23 * 1024**3:
+            raise gr.Error(f"TRELLIS.2 needs about 24 GB of VRAM; {gpu.name} has {gpu.total_memory / 1024**3:.1f} GB.")
+
+        initialize_ui_assets()
+        loaded_pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
+        loaded_pipeline.cuda()
+        loaded_envmap = {
+            'forest': EnvMap(torch.tensor(
+                cv2.cvtColor(cv2.imread(str(APP_ROOT / 'assets/hdri/forest.exr'), cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
+                dtype=torch.float32, device='cuda'
+            )),
+            'sunset': EnvMap(torch.tensor(
+                cv2.cvtColor(cv2.imread(str(APP_ROOT / 'assets/hdri/sunset.exr'), cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
+                dtype=torch.float32, device='cuda'
+            )),
+            'courtyard': EnvMap(torch.tensor(
+                cv2.cvtColor(cv2.imread(str(APP_ROOT / 'assets/hdri/courtyard.exr'), cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
+                dtype=torch.float32, device='cuda'
+            )),
+        }
+        pipeline = loaded_pipeline
+        envmap = loaded_envmap
+
+
 def start_session(req: gr.Request):
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
     os.makedirs(user_dir, exist_ok=True)
@@ -305,7 +357,7 @@ def start_session(req: gr.Request):
     
 def end_session(req: gr.Request):
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
-    shutil.rmtree(user_dir)
+    shutil.rmtree(user_dir, ignore_errors=True)
 
 
 def preprocess_image(image: Image.Image) -> Image.Image:
@@ -318,6 +370,9 @@ def preprocess_image(image: Image.Image) -> Image.Image:
     Returns:
         Image.Image: The preprocessed image.
     """
+    if image is None:
+        raise gr.Error("Upload an image first.")
+    initialize_runtime()
     processed_image = pipeline.preprocess_image(image)
     return processed_image
 
@@ -367,36 +422,43 @@ def image_to_3d(
     req: gr.Request,
     progress=gr.Progress(track_tqdm=True),
 ) -> str:
+    if image is None:
+        raise gr.Error("Upload an image first.")
+    initialize_runtime()
     # --- Sampling ---
-    outputs, latents = pipeline.run(
-        image,
-        seed=seed,
-        preprocess_image=False,
-        sparse_structure_sampler_params={
-            "steps": ss_sampling_steps,
-            "guidance_strength": ss_guidance_strength,
-            "guidance_rescale": ss_guidance_rescale,
-            "rescale_t": ss_rescale_t,
-        },
-        shape_slat_sampler_params={
-            "steps": shape_slat_sampling_steps,
-            "guidance_strength": shape_slat_guidance_strength,
-            "guidance_rescale": shape_slat_guidance_rescale,
-            "rescale_t": shape_slat_rescale_t,
-        },
-        tex_slat_sampler_params={
-            "steps": tex_slat_sampling_steps,
-            "guidance_strength": tex_slat_guidance_strength,
-            "guidance_rescale": tex_slat_guidance_rescale,
-            "rescale_t": tex_slat_rescale_t,
-        },
-        pipeline_type={
-            "512": "512",
-            "1024": "1024_cascade",
-            "1536": "1536_cascade",
-        }[resolution],
-        return_latent=True,
-    )
+    try:
+        outputs, latents = pipeline.run(
+            image,
+            seed=seed,
+            preprocess_image=False,
+            sparse_structure_sampler_params={
+                "steps": ss_sampling_steps,
+                "guidance_strength": ss_guidance_strength,
+                "guidance_rescale": ss_guidance_rescale,
+                "rescale_t": ss_rescale_t,
+            },
+            shape_slat_sampler_params={
+                "steps": shape_slat_sampling_steps,
+                "guidance_strength": shape_slat_guidance_strength,
+                "guidance_rescale": shape_slat_guidance_rescale,
+                "rescale_t": shape_slat_rescale_t,
+            },
+            tex_slat_sampler_params={
+                "steps": tex_slat_sampling_steps,
+                "guidance_strength": tex_slat_guidance_strength,
+                "guidance_rescale": tex_slat_guidance_rescale,
+                "rescale_t": tex_slat_rescale_t,
+            },
+            pipeline_type={
+                "512": "512",
+                "1024": "1024_cascade",
+                "1536": "1536_cascade",
+            }[resolution],
+            return_latent=True,
+        )
+    except torch.OutOfMemoryError as exc:
+        torch.cuda.empty_cache()
+        raise gr.Error("The RTX 4090 ran out of VRAM. Try 512 resolution or close other GPU applications.") from exc
     mesh = outputs[0]
     mesh.simplify(16777216) # nvdiffrast limit
     images = render_utils.render_snapshot(mesh, resolution=1024, r=2, fov=36, nviews=STEPS, envmap=envmap)
@@ -487,7 +549,10 @@ def extract_glb(
     Returns:
         str: The path to the extracted GLB file.
     """
-    user_dir = os.path.join(TMP_DIR, str(req.session_hash))
+    if not state:
+        raise gr.Error("Generate a 3D asset before extracting the GLB.")
+    initialize_runtime()
+    user_dir = str(PORTABLE_PATHS['outputs'])
     shape_slat, tex_slat, res = unpack_state(state)
     mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
     glb = o_voxel.postprocess.to_glb(
@@ -514,13 +579,7 @@ def extract_glb(
     return glb_path, glb_path
 
 
-with gr.Blocks(delete_cache=(600, 600)) as demo:
-    gr.Markdown("""
-    ## Image to 3D Asset with [TRELLIS.2](https://microsoft.github.io/TRELLIS.2)
-    * Upload an image (preferably with an alpha-masked foreground object) and click Generate to create a 3D asset.
-    * Click Extract GLB to export and download the generated GLB file if you're satisfied with the result. Otherwise, try another time.
-    """)
-    
+with gr.Blocks(delete_cache=(600, 600), title="TRELLIS.2 Image to 3D") as demo:
     with gr.Row():
         with gr.Column(scale=1, min_width=360):
             image_prompt = gr.Image(label="Image Prompt", format="png", image_mode="RGBA", type="pil", height=400)
@@ -528,7 +587,7 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="1024")
             seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
             randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
-            decimation_target = gr.Slider(100000, 1000000, label="Decimation Target", value=500000, step=10000)
+            decimation_target = gr.Slider(100000, 500000, label="Decimation Target", value=300000, step=10000)
             texture_size = gr.Slider(1024, 4096, label="Texture Size", value=2048, step=1024)
             
             generate_btn = gr.Button("Generate")
@@ -562,19 +621,6 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
                     glb_output = gr.Model3D(label="Extracted GLB", height=724, show_label=True, display_mode="solid", clear_color=(0.25, 0.25, 0.25, 1.0))
                     download_btn = gr.DownloadButton(label="Download GLB")
                     
-        with gr.Column(scale=1, min_width=172):
-            examples = gr.Examples(
-                examples=[
-                    f'assets/example_image/{image}'
-                    for image in os.listdir("assets/example_image")
-                ],
-                inputs=[image_prompt],
-                fn=preprocess_image,
-                outputs=[image_prompt],
-                run_on_click=True,
-                examples_per_page=18,
-            )
-                    
     output_buf = gr.State()
     
 
@@ -586,6 +632,8 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
         preprocess_image,
         inputs=[image_prompt],
         outputs=[image_prompt],
+        concurrency_limit=1,
+        concurrency_id="gpu",
     )
 
     generate_btn.click(
@@ -603,6 +651,8 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             tex_slat_guidance_strength, tex_slat_guidance_rescale, tex_slat_sampling_steps, tex_slat_rescale_t,
         ],
         outputs=[output_buf, preview_output],
+        concurrency_limit=1,
+        concurrency_id="gpu",
     )
     
     extract_btn.click(
@@ -611,35 +661,14 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
         extract_glb,
         inputs=[output_buf, decimation_target, texture_size],
         outputs=[glb_output, download_btn],
+        concurrency_limit=1,
+        concurrency_id="gpu",
     )
-        
+
+demo.queue(default_concurrency_limit=1, max_size=4)
 
 # Launch the Gradio app
 if __name__ == "__main__":
     os.makedirs(TMP_DIR, exist_ok=True)
-
-    # Construct ui components
-    btn_img_base64_strs = {}
-    for i in range(len(MODES)):
-        icon = Image.open(MODES[i]['icon'])
-        MODES[i]['icon_base64'] = image_to_base64(icon)
-
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
-    pipeline.cuda()
-    
-    envmap = {
-        'forest': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/forest.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'sunset': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/sunset.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'courtyard': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/courtyard.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-    }
-    
+    initialize_ui_assets()
     demo.launch(css=css, head=head)

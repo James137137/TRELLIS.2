@@ -55,7 +55,30 @@ Data processing is streamlined for instant conversions that are fully **renderin
 
 ## 🛠️ Installation
 
-### Prerequisites
+### Portable Windows 11 app (RTX 4090 / 24 GB)
+
+This checkout includes a native Windows launcher that does not use WSL, Ubuntu,
+Docker, ComfyUI, Conda, a system Python installation, the CUDA Toolkit, or Visual
+Studio. It uses the NVIDIA driver and Edge/Chrome already installed on the PC.
+
+1. Request access to
+   [facebook/dinov3-vitl16-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m)
+   and create a Hugging Face **read** token.
+2. Double-click `Setup TRELLIS 2.bat`. Paste the token when prompted. The first
+   setup downloads the private Python/CUDA runtime and model weights.
+3. Double-click `Launch TRELLIS 2.bat` for normal use.
+4. Close the dedicated browser app window to stop the backend.
+
+All runtime files, packages, credentials, model weights, caches, browser data,
+temporary files, logs, and generated GLBs are stored in `.portable` beneath this
+folder. No PATH or registry entries are created. Deleting the TRELLIS.2 folder
+removes the complete app, except for GLBs you manually downloaded elsewhere and
+the model-license agreement attached to your online Hugging Face account.
+
+See [windows/PORTABLE_WINDOWS.md](windows/PORTABLE_WINDOWS.md) for dependency
+provenance and troubleshooting.
+
+### Original Linux prerequisites
 - **System**: The code is currently tested only on **Linux**.
 - **Hardware**: An NVIDIA GPU with at least 24GB of memory is necessary. The code has been verified on NVIDIA A100 and H100 GPUs.  
 - **Software**:   
